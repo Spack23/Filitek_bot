@@ -1,0 +1,152 @@
+import asyncio
+from aiogram import Bot, Dispatcher, types
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.bot import DefaultBotProperties
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+
+TOKEN = "7992922377:AAFiVXfKdaP4aP0v6z2KtdTO1SnBhzJ9iLQ"
+MANAGER_CHAT_ID = -1003074248726
+
+class CarInfo(StatesGroup):
+    task = State()          
+    brand_model = State()
+    year = State()
+    imported = State()
+    country = State()
+    user_name = State()
+    phone = State()
+
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML"),
+    session=AiohttpSession()
+)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Здравствуйте! Какая задача или проблема с вашим автомобилем? (например: тюнинг выхлопа, ремонт глушителя, шум и т.п.)")
+    await state.set_state(CarInfo.task)
+
+
+@dp.message(CarInfo.task)
+async def handle_task(message: types.Message, state: FSMContext):
+    await state.update_data(task=message.text.strip())
+    await message.answer("Введите марку, модель, объем двигателя вашего автомобиля и какой тип топлива (бензин/дизель):")
+    await state.set_state(CarInfo.brand_model)
+
+
+@dp.message(CarInfo.brand_model)
+async def handle_brand_model(message: types.Message, state: FSMContext):
+    await state.update_data(brand_model=message.text.strip())
+    await message.answer("Введите год выпуска автомобиля:")
+    await state.set_state(CarInfo.year)
+
+
+@dp.message(CarInfo.year)
+async def handle_year(message: types.Message, state: FSMContext):
+    year = message.text.strip()
+    if not year.isdigit() or not 1900 <= int(year) <= 2100:
+        await message.answer("❌ Некорректный год. Попробуйте снова.")
+        return
+
+    year_int = int(year)
+    await state.update_data(year=year_int)
+
+    if year_int >= 2017:
+        kb_inline = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Да", callback_data="import_yes")],
+            [InlineKeyboardButton(text="Нет", callback_data="import_no")]
+        ])
+        await message.answer("Привезена ли машина из другой страны?", reply_markup=kb_inline)
+        await state.set_state(CarInfo.imported)
+    else:
+        await state.update_data(imported="Не применимо", country="Не применимо")
+        await message.answer("Как к вам можно обращаться?", reply_markup=ReplyKeyboardRemove())
+        await state.set_state(CarInfo.user_name)
+
+
+# --- Обработчик кнопок для импорта ---
+@dp.callback_query(lambda c: c.data in ["import_yes", "import_no"])
+async def handle_imported_callback(callback: types.CallbackQuery, state: FSMContext):
+    answer = "Да" if callback.data == "import_yes" else "Нет"
+    await state.update_data(imported=answer)
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+
+    if answer == "Да":
+        await callback.message.answer("Из какой страны была привезена машина?")
+        await state.set_state(CarInfo.country)
+    else:
+        await state.update_data(country="Не применимо")
+        await callback.message.answer("Как к вам можно обращаться?", reply_markup=ReplyKeyboardRemove())
+        await state.set_state(CarInfo.user_name)
+
+
+@dp.message(CarInfo.country)
+async def handle_country(message: types.Message, state: FSMContext):
+    await state.update_data(country=message.text.strip())
+    await message.answer("Как к вам можно обращаться?", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(CarInfo.user_name)
+
+
+@dp.message(CarInfo.user_name)
+async def handle_user_name(message: types.Message, state: FSMContext):
+    await state.update_data(user_name=message.text.strip())
+    btn = KeyboardButton(text="Поделиться контактом", request_contact=True)
+    kb = ReplyKeyboardMarkup(keyboard=[[btn]], resize_keyboard=True, one_time_keyboard=True)
+    await message.answer("Теперь отправьте ваш номер телефона или нажмите кнопку ниже:", reply_markup=kb)
+    await state.set_state(CarInfo.phone)
+
+
+@dp.message(CarInfo.phone)
+async def handle_phone(message: types.Message, state: FSMContext):
+    if message.contact and message.contact.phone_number:
+        phone = message.contact.phone_number
+    else:
+        phone = message.text.strip()
+        if not phone.isdigit() or not 11 <= len(phone) <= 12:
+            await message.answer("❌ Номер некорректный. Пожалуйста, введите цифрами.")
+            return
+
+    if phone.startswith("8"):
+        phone = "+7" + phone[1:]
+    elif not phone.startswith("+"):
+        phone = "+" + phone
+
+    await state.update_data(phone=phone)
+
+    data = await state.get_data()
+    tg_user = message.from_user.full_name
+    username = f"@{message.from_user.username}" if message.from_user.username else "нет username"
+
+    text = (
+        "📞 Новая заявка на обратный звонок\n\n"
+        f"📌 <i>Цель обращения:</i> <b>{data['task']}</b>\n"
+        f"🚗 <i>Марка и модель:</i> <b>{data['brand_model']}</b>\n"
+        f"🌍 <i>Привезена из другой страны:</i> <b>{data['imported']}</b>\n"
+        f"🏳️ <i>Откуда привезли авто:</i> <b>{data.get('country', 'Не применимо')}</b>\n"
+        f"📅 <i>Год выпуска:</i> <b>{data['year']}</b>\n\n"
+        f"📝 <i>Имя для обращения:</i> <b>{data['user_name']}</b>\n"
+        f"🔗 <i>Telegram:</i> <b>{username}</b>\n"
+        f"📱 <i>Телефон:</i> <b>{phone}</b>"
+    )
+    await bot.send_message(MANAGER_CHAT_ID, text)
+    await message.answer("Спасибо! Мы сформировали заявку, скоро с вами свяжется менеджер.", reply_markup=ReplyKeyboardRemove())
+    await state.clear()
+
+
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
