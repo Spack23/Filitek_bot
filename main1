@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 
-TOKEN = "7992922377:AAFiVXfKdaP4aP0v6z2KtdTO1SnBhzJ9iLQ"
+TOKEN = "token"
 MANAGER_CHAT_ID = -1003074248726
 
 class CarInfo(StatesGroup):
